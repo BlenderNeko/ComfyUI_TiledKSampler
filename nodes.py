@@ -90,7 +90,9 @@ class TiledKSamplerAdvanced:
         cycle = len(tiles)
         masks = None
 
-        for i in trange((end_at_step - start_at_step) // steps_per_tile):
+        total_steps = (end_at_step - start_at_step) // steps_per_tile
+        pbar = comfy.utils.ProgressBar(total_steps)
+        for i in trange(total_steps):
             for tiles_batch in tiles[i%cycle]:
                 #get latent slices
                 slices = [tiling.get_slice(samples, x1,x2,y1,y2) for x1,x2,y1,y2,_ in tiles_batch]
@@ -114,8 +116,9 @@ class TiledKSamplerAdvanced:
                 pos = expand_cond(positive_copy, num_slices)
                 neg = expand_cond(negative_copy, num_slices)
 
-                tile_result = sampler.sample(noise_tile, pos, neg, cfg=cfg, latent_image=latent_tiles, start_step=start_at_step + i * steps_per_tile, last_step=start_at_step + i*steps_per_tile + steps_per_tile, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=masks)
+                tile_result = sampler.sample(noise_tile, pos, neg, cfg=cfg, latent_image=latent_tiles, start_step=start_at_step + i * steps_per_tile, last_step=start_at_step + i*steps_per_tile + steps_per_tile, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=masks, disable_pbar=True)
                 tiling.set_slice(samples, tile_result, [(x1,x2,y1,y2) for x1,x2,y1,y2,_ in tiles_batch], masks)
+            pbar.update_absolute(i + 1, total_steps)
         comfy.sample.cleanup_additional_models(models)
 
         out = latent_image.copy()
