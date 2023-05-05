@@ -37,9 +37,9 @@ def set_slice(tensor1,tensor2, slices, masks=None):
 def get_tiles_and_masks_rgrid(steps, latent_shape, tile_height, tile_width, padding, max_batches, generator, device):
 
     def calc_coords(latent_size, tile_size, jitter):
-        tile_coords = int((latent_size + jitter - 1) // (tile_size) + 1)
-        tile_coords = [np.clip(tile_size * h - jitter, 0, latent_size) for h in range(tile_coords + 1)]
-        tile_coords = [(h1, h2-h1) for h1, h2 in zip(tile_coords, tile_coords[1:])]
+        tile_coords = int((latent_size + jitter - 1) // tile_size + 1)
+        tile_coords = [np.clip(tile_size * c - jitter, 0, latent_size) for c in range(tile_coords + 1)]
+        tile_coords = [(c1, c2-c1) for c1, c2 in zip(tile_coords, tile_coords[1:])]
         return tile_coords
     
     #calc stuff
@@ -75,8 +75,8 @@ def get_tiles_and_masks_rgrid(steps, latent_shape, tile_height, tile_width, padd
                 for w in tiles_w[i%2]:
                     tiles.append((h[0], h[1], w[0], w[1], None))
         else:
-            for i, h in enumerate(tiles_w[0]):
-                for w in tiles_h[i%2]:
+            for i, w in enumerate(tiles_w[0]):
+                for h in tiles_h[i%2]:
                     tiles.append((h[0], h[1], w[0], w[1], None))
         tiles = list(create_batches(max_batches, tiles))
         tiles_all.append(tiles)
