@@ -54,10 +54,10 @@ def get_tiles_and_masks_rgrid(steps, latent_shape, tile_height, tile_width, padd
     for s in range(steps):
         rands = torch.rand((2,), dtype=torch.float32, generator=generator, device='cpu').numpy()
 
-        jitter_w1 = int(((rands[0] * tile_size_w) // 8) * 8)
-        jitter_w2 = int(((((rands[0] + .5) % 1.0) * tile_size_w) // 8) * 8)
-        jitter_h1 = int(((rands[1] * tile_size_h) // 8 ) *8)
-        jitter_h2 = int(((((rands[1] + .5) % 1.0) * tile_size_h) // 8 ) *8)
+        jitter_w1 = int(rands[0] * tile_size_w)
+        jitter_w2 = int(((rands[0] + .5) % 1.0) * tile_size_w)
+        jitter_h1 = int(rands[1] * tile_size_h)
+        jitter_h2 = int(((rands[1] + .5) % 1.0) * tile_size_h)
 
         #calc number of tiles
         tiles_h = [
