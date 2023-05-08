@@ -16,8 +16,8 @@ roadmap:
 
  - [x] latent masks
  - [x] image wide control nets
- - [ ] T2I adaptors
- - [ ] tile wide control nets and T2I adaptors
+ - [x] T2I adaptors (requires forked version of comfy for now)
+ - [ ] tile wide control nets and T2I adaptors (e.g. style models)
  - [ ] area conditioning
- - [ ] GLIGEN
  - [ ] area mask conditioning
+ - [ ] GLIGEN

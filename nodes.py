@@ -28,6 +28,15 @@ def slice_cnet(tiles_batch, model:comfy.sd.ControlNet, img):
     slices = torch.cat(slices).to(model.control_model.dtype).to(model.device)
     model.cond_hint = slices
 
+def slices_T2I(tiles_batch, model:comfy.sd.T2IAdapter, img):
+    model.control_input = None
+    if img is None:
+        img = model.cond_hint_original
+    slices = [tiling.get_slice(img, x1*8,x2*8,y1*8,y2*8) for x1,x2,y1,y2,_ in tiles_batch]
+    slices = torch.cat(slices).float().to(model.device)
+    model.cond_hint = slices
+    
+
 class TiledKSamplerAdvanced:
     @classmethod
     def INPUT_TYPES(s):
@@ -96,6 +105,18 @@ class TiledKSamplerAdvanced:
             torch.nn.functional.interpolate(m.cond_hint_original, (noise.shape[-2] * 8, noise.shape[-1] * 8), mode='nearest-exact').to('cpu')
             if m.cond_hint_original.shape[-2] != noise.shape[-2] * 8 or m.cond_hint_original.shape[-1] != noise.shape[-1] * 8 else None
             for m in cnets]
+
+        #T2I
+        T2Is = [m for m in models if isinstance(m, comfy.sd.T2IAdapter)]
+        T2I_imgs = [
+            torch.nn.functional.interpolate(m.cond_hint_original, (noise.shape[-2] * 8, noise.shape[-1] * 8), mode='nearest-exact').to('cpu')
+            if m.cond_hint_original.shape[-2] != noise.shape[-2] * 8 or m.cond_hint_original.shape[-1] != noise.shape[-1] * 8 or (m.channels_in == 1 and m.cond_hint_original.shape[1] != 1) else None
+            for m in T2Is
+        ]
+        T2I_imgs = [
+            torch.mean(img, 1, keepdim=True) if img is not None and m.channels_in == 1 and m.cond_hint_original.shape[1] else img
+            for m, img in zip(T2Is, T2I_imgs)
+        ]
         
         #TODO: fix issues with concurrent tiles
         if len(cnets) > 0:
@@ -132,8 +153,11 @@ class TiledKSamplerAdvanced:
                 pos = expand_cond(positive_copy, len(slices))
                 neg = expand_cond(negative_copy, len(slices))
 
-                for cnet, img in zip(cnets, cnet_imgs):
-                    slice_cnet(tiles_batch, cnet, img)
+                for m, img in zip(cnets, cnet_imgs):
+                    slice_cnet(tiles_batch, m, img)
+                
+                for m, img in zip(T2Is, T2I_imgs):
+                    slices_T2I(tiles_batch, m, img)
 
                 tile_result = sampler.sample(noise_tile, pos, neg, cfg=cfg, latent_image=latent_tiles, start_step=start_at_step + i * steps_per_tile, last_step=start_at_step + i*steps_per_tile + steps_per_tile, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=masks, disable_pbar=True)
                 tiling.set_slice(samples, tile_result, [(x1,x2,y1,y2) for x1,x2,y1,y2,_ in tiles_batch], masks)
