@@ -15,16 +15,24 @@ from . import tiling
 
 MAX_RESOLUTION=8192
 
+def copy_cond(cond):
+    return [(c1,c2.copy()) for c1,c2 in cond]
+
 def slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, cond, area):
+    tile_h_end = tile_h + tile_h_len
+    tile_w_end = tile_w + tile_w_len
     coords = area[0] #h_len, w_len, h, w,
     mask = area[1]
     if coords is not None:
         h_len, w_len, h, w = coords
-        if h >= tile_h and h < tile_h + tile_h_len and w >= tile_w and w < tile_w + tile_w_len:
-            cond[1]['area'] = (
-                min(h_len, max(8, tile_h + tile_h + tile_h_len - h)),
-                min(w_len, max(8, tile_w + tile_w + tile_w_len - w)),
-                    h-tile_h, w - tile_w)
+        h_end = h + h_len
+        w_end = w + w_len
+        if h < tile_h_end and h_end > tile_h and w < tile_w_end and w_end > tile_w:
+            new_h = max(0, h - tile_h)
+            new_w = max(0, w - tile_w)
+            new_h_end = min(tile_h_end, h_end - tile_h)
+            new_w_end = min(tile_w_end, w_end - tile_w)
+            cond[1]['area'] = (new_h_end - new_h, new_w_end - new_w, new_h, new_w)
         else:
             return (cond, True)
     if mask is not None:
@@ -34,6 +42,31 @@ def slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, cond, area):
         else:
             cond[1]['mask'] = new_mask
     return (cond, False)
+
+def slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen):
+    tile_h_end = tile_h + tile_h_len
+    tile_w_end = tile_w + tile_w_len
+    if gligen is None:
+        return
+    gligen_type = gligen[0]
+    gligen_model = gligen[1]
+    gligen_areas = gligen[2]
+    
+    gligen_areas_new = []
+    for emb, h_len, w_len, h, w in gligen_areas:
+        h_end = h + h_len
+        w_end = w + w_len
+        if h < tile_h_end and h_end > tile_h and w < tile_w_end and w_end > tile_w:
+            new_h = max(0, h - tile_h)
+            new_w = max(0, w - tile_w)
+            new_h_end = min(tile_h_end, h_end - tile_h)
+            new_w_end = min(tile_w_end, w_end - tile_w)
+            gligen_areas_new.append((emb, new_h_end - new_h, new_w_end - new_w, new_h, new_w))
+
+    if len(gligen_areas_new) == 0:
+        del cond['gligen']
+    else:
+        cond['gligen'] = (gligen_type, gligen_model, gligen_areas_new)
 
 def slice_cnet(h, h_len, w, w_len, model:comfy.sd.ControlNet, img):
     if img is None:
@@ -139,10 +172,18 @@ class TiledKSamplerAdvanced:
             for c in negative
         ]
 
+        #gligen
+        gligen_pos = [
+            c[1]['gligen'] if 'gligen' in c[1] else None
+            for c in positive
+        ]
+        gligen_neg = [
+            c[1]['gligen'] if 'gligen' in c[1] else None
+            for c in negative
+        ]
+
         positive_copy = comfy.sample.broadcast_cond(positive, shape[0], device)
-        positive_copy = [(c1, c2.copy()) for c1, c2 in positive_copy]
         negative_copy = comfy.sample.broadcast_cond(negative, shape[0], device)
-        negative_copy = [(c1, c2.copy()) for c1, c2 in negative_copy]
 
         gen = torch.manual_seed(noise_seed)
         if tiling_strategy == 'random':
@@ -191,16 +232,28 @@ class TiledKSamplerAdvanced:
                         
                         #TODO: all other condition based stuff like area sets and GLIGEN should also happen here
 
+                        #cnets
                         for m, img in zip(cnets, cnet_imgs):
                             slice_cnet(tile_h, tile_h_len, tile_w, tile_w_len, m, img)
                         
+                        #T2I
                         for m, img in zip(T2Is, T2I_imgs):
                             slices_T2I(tile_h, tile_h_len, tile_w, tile_w_len, m, img)
 
-                        pos = [slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, c, area) for c, area in zip(positive_copy, spatial_conds_pos)]
+                        pos = copy_cond(positive_copy)
+                        neg = copy_cond(negative_copy)
+
+                        #cond areas
+                        pos = [slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, c, area) for c, area in zip(pos, spatial_conds_pos)]
                         pos = [c for c, ignore in pos if not ignore]
-                        neg = [slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, c, area) for c, area in zip(negative_copy, spatial_conds_neg)]
+                        neg = [slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, c, area) for c, area in zip(neg, spatial_conds_neg)]
                         neg = [c for c, ignore in neg if not ignore]
+
+                        #gligen
+                        for (_, cond), gligen in zip(pos, gligen_pos):
+                            slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen)
+                        for (_, cond), gligen in zip(neg, gligen_neg):
+                            slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen)
 
                         tile_result = sampler.sample(tiled_noise, pos, neg, cfg=cfg, latent_image=tiled_latent, start_step=start_at_step + i * tile_steps, last_step=start_at_step + i*tile_steps + tile_steps, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=tiled_mask, callback=callback, disable_pbar=True)
                         tiling.set_slice(samples, tile_result, tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask)

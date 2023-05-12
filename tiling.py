@@ -38,8 +38,8 @@ def get_tiles_and_masks_simple(steps, latent_shape, tile_height, tile_width):
     w = np.arange(0,latent_size_w, tile_size_w)
 
     def create_tile(hs, ws, i, j):
-        h = hs[i]
-        w = ws[j]
+        h = int(hs[i])
+        w = int(ws[j])
         h_len = min(tile_size_h, latent_size_h - h)
         w_len = min(tile_size_w, latent_size_w - w)
         return (h, h_len, w, w_len, steps, None)
@@ -99,8 +99,8 @@ def get_tiles_and_masks_padded(steps, latent_shape, tile_height, tile_width):
     
 
     def create_tile(hs, ws, mask_h, mask_w, i, j):
-        h = hs[i]
-        w = ws[j]
+        h = int(hs[i])
+        w = int(ws[j])
         h_len = min(tile_size_h, latent_size_h - h)
         w_len = min(tile_size_w, latent_size_w - w)
         mask = create_mask(i,j,len(hs)-1, len(ws)-1, mask_h, mask_w, h_len, w_len)
@@ -155,10 +155,10 @@ def get_tiles_and_masks_rgrid(steps, latent_shape, tile_height, tile_width, gene
         if s % 2 == 0:
             for i, h in enumerate(tiles_h[0]):
                 for w in tiles_w[i%2]:
-                    tiles.append((h[0], h[1], w[0], w[1], 1, None))
+                    tiles.append((int(h[0]), int(h[1]), int(w[0]), int(w[1]), 1, None))
         else:
             for i, w in enumerate(tiles_w[0]):
                 for h in tiles_h[i%2]:
-                    tiles.append((h[0], h[1], w[0], w[1], 1, None))
+                    tiles.append((int(h[0]), int(h[1]), int(w[0]), int(w[1]), 1, None))
         tiles_all.append(tiles)
     return [tiles_all]
