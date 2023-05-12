@@ -1,7 +1,9 @@
 import sys
 import os
+import itertools
+import numpy as np
 
-from tqdm.auto import trange
+from tqdm.auto import tqdm
 
 import torch
 
@@ -13,29 +15,36 @@ from . import tiling
 
 MAX_RESOLUTION=8192
 
-def expand_cond(cond, batch):
-    copy = []
-    for p in cond:
-        t = p[0]
-        t = t.expand([batch] + ([-1] * (len(t.shape) -1)))
-        copy += [[t] + p[1:]]
-    return copy
+def slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, cond, area):
+    coords = area[0] #h_len, w_len, h, w,
+    mask = area[1]
+    if coords is not None:
+        h_len, w_len, h, w = coords
+        if h >= tile_h and h < tile_h + tile_h_len and w >= tile_w and w < tile_w + tile_w_len:
+            cond[1]['area'] = (
+                min(h_len, max(8, tile_h + tile_h + tile_h_len - h)),
+                min(w_len, max(8, tile_w + tile_w + tile_w_len - w)),
+                    h-tile_h, w - tile_w)
+        else:
+            return (cond, True)
+    if mask is not None:
+        new_mask = tiling.get_slice(mask, tile_h,tile_h_len,tile_w,tile_w_len)
+        if new_mask.sum().cpu() == 0.0 and 'mask' in cond[1]:
+            return (cond, True)
+        else:
+            cond[1]['mask'] = new_mask
+    return (cond, False)
 
-def slice_cnet(tiles_batch, model:comfy.sd.ControlNet, img):
+def slice_cnet(h, h_len, w, w_len, model:comfy.sd.ControlNet, img):
     if img is None:
         img = model.cond_hint_original
-    slices = [tiling.get_slice(img, x1*8,x2*8,y1*8,y2*8) for x1,x2,y1,y2,_ in tiles_batch]
-    slices = torch.cat(slices).to(model.control_model.dtype).to(model.device)
-    model.cond_hint = slices
+    model.cond_hint = tiling.get_slice(img, h*8, h_len*8, w*8, w_len*8).to(model.control_model.dtype).to(model.device)
 
-def slices_T2I(tiles_batch, model:comfy.sd.T2IAdapter, img):
+def slices_T2I(h, h_len, w, w_len, model:comfy.sd.T2IAdapter, img):
     model.control_input = None
     if img is None:
         img = model.cond_hint_original
-    slices = [tiling.get_slice(img, x1*8,x2*8,y1*8,y2*8) for x1,x2,y1,y2,_ in tiles_batch]
-    slices = torch.cat(slices).float().to(model.device)
-    model.cond_hint = slices
-    
+    model.cond_hint = tiling.get_slice(img, h*8, h_len*8, w*8, w_len*8).float().to(model.device)
 
 class TiledKSamplerAdvanced:
     @classmethod
@@ -46,7 +55,7 @@ class TiledKSamplerAdvanced:
                     "noise_seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                     "tile_width": ("INT", {"default": 512, "min": 256, "max": MAX_RESOLUTION, "step": 64}),
                     "tile_height": ("INT", {"default": 512, "min": 256, "max": MAX_RESOLUTION, "step": 64}),
-                    "concurrent_tiles": ("INT", {"default": 1, "min": 1, "max": 64, "step": 1}),
+                    "tiling_strategy": (["random", "padded", 'simple'], ),
                     "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                     "sampler_name": (comfy.samplers.KSampler.SAMPLERS, ),
@@ -65,8 +74,8 @@ class TiledKSamplerAdvanced:
     CATEGORY = "sampling"
 
 
-    def sample(self, model, add_noise, noise_seed, tile_width, tile_height, concurrent_tiles, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, denoise=1.0):
-        end_at_step = min(end_at_step, steps + start_at_step)
+    def sample(self, model, add_noise, noise_seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, denoise=1.0):
+        end_at_step = min(end_at_step, steps)
         device = comfy.model_management.get_torch_device()
         samples = latent_image["samples"]
         noise_mask = latent_image["noise_mask"] if "noise_mask" in latent_image else None
@@ -79,38 +88,38 @@ class TiledKSamplerAdvanced:
 
         if noise_mask is not None:
             noise_mask = comfy.sample.prepare_mask(noise_mask, noise.shape, device)
+
+        shape = samples.shape
         
         real_model = None
         comfy.model_management.load_model_gpu(model)
         real_model = model.model
 
-        noise = noise.to(device)
         samples = samples.to(device)
-
-        positive_copy = comfy.sample.broadcast_cond(positive, noise.shape[0], device)
-        negative_copy = comfy.sample.broadcast_cond(negative, noise.shape[0], device)
 
         models = comfy.sample.load_additional_models(positive, negative)
 
         sampler = comfy.samplers.KSampler(real_model, steps=steps, device=device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
-        if noise_mask is not None:
-            samples += sampler.sigmas[start_at_step] * noise_mask * noise
-        else:
-            samples += sampler.sigmas[start_at_step] * noise
-        noise_tile = torch.zeros(samples.shape[:2] + (tile_height // 8, tile_width//8,), dtype=samples.dtype, device=device)
+
+        if tiling_strategy != 'padded':
+            if noise_mask is not None:
+                samples += sampler.sigmas[start_at_step] * noise_mask * noise.to(device)
+            else:
+                samples += sampler.sigmas[start_at_step] * noise.to(device)
+            
 
         #cnets
         cnets = [m for m in models if isinstance(m, comfy.sd.ControlNet)]
         cnet_imgs = [
-            torch.nn.functional.interpolate(m.cond_hint_original, (noise.shape[-2] * 8, noise.shape[-1] * 8), mode='nearest-exact').to('cpu')
-            if m.cond_hint_original.shape[-2] != noise.shape[-2] * 8 or m.cond_hint_original.shape[-1] != noise.shape[-1] * 8 else None
+            torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
+            if m.cond_hint_original.shape[-2] != shape[-2] * 8 or m.cond_hint_original.shape[-1] != shape[-1] * 8 else None
             for m in cnets]
 
         #T2I
         T2Is = [m for m in models if isinstance(m, comfy.sd.T2IAdapter)]
         T2I_imgs = [
-            torch.nn.functional.interpolate(m.cond_hint_original, (noise.shape[-2] * 8, noise.shape[-1] * 8), mode='nearest-exact').to('cpu')
-            if m.cond_hint_original.shape[-2] != noise.shape[-2] * 8 or m.cond_hint_original.shape[-1] != noise.shape[-1] * 8 or (m.channels_in == 1 and m.cond_hint_original.shape[1] != 1) else None
+            torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
+            if m.cond_hint_original.shape[-2] != shape[-2] * 8 or m.cond_hint_original.shape[-1] != shape[-1] * 8 or (m.channels_in == 1 and m.cond_hint_original.shape[1] != 1) else None
             for m in T2Is
         ]
         T2I_imgs = [
@@ -118,50 +127,85 @@ class TiledKSamplerAdvanced:
             for m, img in zip(T2Is, T2I_imgs)
         ]
         
-        #TODO: fix issues with concurrent tiles
-        if len(cnets) > 0:
-            concurrent_tiles = 1
+        #cond area and mask
+        spatial_conds_pos = [
+            (c[1]['area'] if 'area' in c[1] else None, 
+             comfy.sample.prepare_mask(c[1]['mask'], shape, device) if 'mask' in c[1] else None)
+            for c in positive
+        ]
+        spatial_conds_neg = [
+            (c[1]['area'] if 'area' in c[1] else None, 
+             comfy.sample.prepare_mask(c[1]['mask'], shape, device) if 'mask' in c[1] else None)
+            for c in negative
+        ]
+
+        positive_copy = comfy.sample.broadcast_cond(positive, shape[0], device)
+        positive_copy = [(c1, c2.copy()) for c1, c2 in positive_copy]
+        negative_copy = comfy.sample.broadcast_cond(negative, shape[0], device)
+        negative_copy = [(c1, c2.copy()) for c1, c2 in negative_copy]
 
         gen = torch.manual_seed(noise_seed)
-        tiles = tiling.get_tiles_and_masks_rgrid(steps, samples.shape, tile_height, tile_width, 0, concurrent_tiles, gen, device)
+        if tiling_strategy == 'random':
+            tiles = tiling.get_tiles_and_masks_rgrid(end_at_step - start_at_step, samples.shape, tile_height, tile_width, gen)
+        elif tiling_strategy == 'padded':
+            tiles = tiling.get_tiles_and_masks_padded(end_at_step - start_at_step, samples.shape, tile_height, tile_width)
+        else:
+            tiles = tiling.get_tiles_and_masks_simple(end_at_step - start_at_step, samples.shape, tile_height, tile_width)
 
-        steps_per_tile = 1
-        cycle = len(tiles)
-        masks = None
+        total_steps = sum([num_steps for img_pass in tiles for steps_list in img_pass for _,_,_,_,num_steps,_ in steps_list])
+        current_step = [0]
+        
+        with tqdm(total=total_steps) as pbar_tqdm:
+            pbar = comfy.utils.ProgressBar(total_steps)
+            
+            def callback(step, x0, x, total_steps):
+                current_step[0] += 1
+                pbar.update_absolute(current_step[0])
+                pbar_tqdm.update(1)
 
-        total_steps = (end_at_step - start_at_step) // steps_per_tile
-        pbar = comfy.utils.ProgressBar(total_steps)
-        for i in trange(total_steps):
-            for tiles_batch in tiles[i%cycle]:
-                #get latent slices
-                
-                #if we have mask get mask slices and see if we can skip slices
-                if noise_mask is not None:
-                    tile_masks = [tiling.get_slice(noise_mask, x1,x2,y1,y2) for x1,x2,y1,y2,_ in tiles_batch]
-                    can_skip = [x.sum().cpu() == 0 for x in tile_masks]
-                    if all(can_skip):
-                        continue
-                    tile_masks = [x for x,y in zip(tile_masks, can_skip) if not y]
-                    tiles_batch =  [x for x,y in zip(tiles_batch, can_skip) if not y]
-                    masks = torch.concat(tile_masks)
+            for img_pass in tiles:
+                for i in range(len(img_pass)):
+                    for tile_h, tile_h_len, tile_w, tile_w_len, tile_steps, tile_mask in img_pass[i]:
+                    
+                        #if we have masks get mask slices and see if we can skip slices
+                        if noise_mask is not None or tile_mask is not None:
+                            if noise_mask is not None:
+                                tiled_mask = tiling.get_slice(noise_mask, tile_h, tile_h_len, tile_w, tile_w_len)
+                                if tile_mask is not None:
+                                    tiled_mask *= tile_mask.to(device)
+                            else:
+                                tiled_mask = tile_mask.to(device)
+                            if tiled_mask.sum().cpu() == 0.0:
+                                continue
+                        else:
+                            tiled_mask = None
+                                
+                        tiled_latent = tiling.get_slice(samples, tile_h, tile_h_len, tile_w, tile_w_len)
+                        if tiling_strategy == 'padded':
+                            tiled_noise = tiling.get_slice(noise, tile_h, tile_h_len, tile_w, tile_w_len).to(device)
+                        else:
+                            if tiled_mask is None:
+                                tiled_noise = torch.zeros_like(tiled_latent)
+                            else:
+                                tiling.get_slice(noise, tile_h, tile_h_len, tile_w, tile_w_len).to(device) * (1 - tiled_mask)
+                        
+                        #TODO: all other condition based stuff like area sets and GLIGEN should also happen here
 
-                slices = [tiling.get_slice(samples, x1,x2,y1,y2) for x1,x2,y1,y2,_ in tiles_batch]
-                latent_tiles = torch.concat(slices)
-                noise_tile = torch.zeros_like(latent_tiles)
-                
-                #TODO: all other condition based stuff like area sets and GLIGEN should also happen here
-                pos = expand_cond(positive_copy, len(slices))
-                neg = expand_cond(negative_copy, len(slices))
+                        for m, img in zip(cnets, cnet_imgs):
+                            slice_cnet(tile_h, tile_h_len, tile_w, tile_w_len, m, img)
+                        
+                        for m, img in zip(T2Is, T2I_imgs):
+                            slices_T2I(tile_h, tile_h_len, tile_w, tile_w_len, m, img)
 
-                for m, img in zip(cnets, cnet_imgs):
-                    slice_cnet(tiles_batch, m, img)
-                
-                for m, img in zip(T2Is, T2I_imgs):
-                    slices_T2I(tiles_batch, m, img)
+                        pos = [slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, c, area) for c, area in zip(positive_copy, spatial_conds_pos)]
+                        pos = [c for c, ignore in pos if not ignore]
+                        neg = [slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, c, area) for c, area in zip(negative_copy, spatial_conds_neg)]
+                        neg = [c for c, ignore in neg if not ignore]
 
-                tile_result = sampler.sample(noise_tile, pos, neg, cfg=cfg, latent_image=latent_tiles, start_step=start_at_step + i * steps_per_tile, last_step=start_at_step + i*steps_per_tile + steps_per_tile, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=masks, disable_pbar=True)
-                tiling.set_slice(samples, tile_result, [(x1,x2,y1,y2) for x1,x2,y1,y2,_ in tiles_batch], masks)
-            pbar.update_absolute(i + 1, total_steps)
+                        tile_result = sampler.sample(tiled_noise, pos, neg, cfg=cfg, latent_image=tiled_latent, start_step=start_at_step + i * tile_steps, last_step=start_at_step + i*tile_steps + tile_steps, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=tiled_mask, callback=callback, disable_pbar=True)
+                        tiling.set_slice(samples, tile_result, tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask)
+                        
+
         comfy.sample.cleanup_additional_models(models)
 
         out = latent_image.copy()
