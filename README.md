@@ -1,23 +1,66 @@
-# WIP tiled sampling for ComfyUI
+# Tiled sampling for ComfyUI
+
+![panorama of the ocean, sailboats and large moody clouds](https://github.com/BlenderNeko/ComfyUI_TiledKSampler/blob/master/examples/ComfyUI_02010_.png)
 
 this repo contains a tiled sampler for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). It allows for denoising larger images by splitting it up into smaller tiles and denoising these. It tries to minimize any seams for showing up in the end result by gradually denoising all tiles one step at the time and randomizing tile positions for every step.
 
 ### settings
 
-The tiled sampler comes with some additional settings to further control it's behavior:
+The tiled samplers comes with some additional settings to further control it's behavior:
 
 - **tile_width**: the width of the tiles.
 - **tile_height**: the height of the tiles.
-- **concurrent_tiles**: determines how many tiles to try and denoise concurrently.
+- **tiling_strategy**: how to do the tiling
 
-If results look tiled, it might help to increase the number of steps and to use an ancestral sampler
+## Tiling strategies
 
-roadmap:
+### random:
+The random tiling strategy aims to reduce the presence of seams as much as possible by slowly denoising the entire image step by step, randomizing the tile positions for each step. It does this by alternating between horizontal and vertical brick patterns, randomly offsetting the pattern each time. As the number of steps grows to infinity the strength of seams shrinks to zero. Although this random offset eliminates seams, it comes at the cost of additional overhead per step and makes this strategy incompatible with uni samplers.
+
+<details>
+<summary>
+visual explanation
+</summary>
+
+![gif showing of the random brick tiling](https://github.com/BlenderNeko/ComfyUI_TiledKSampler/blob/master/examples/tiled_random.gif)
+</details>
+
+<details>
+<summary>
+example seamless image
+</summary>
+
+This tiling strategy is exceptionally good in hiding seams, even when starting off from complete noise, repetitions are visible but seams are not.
+
+![gif showing of the random brick tiling](https://github.com/BlenderNeko/ComfyUI_TiledKSampler/blob/master/examples/ComfyUI_02006_.png)
+</details>
+
+### padded:
+
+The padded tiling strategy tries to reduce seams by giving each tile more context of its surroundings through padding. It does this by further dividing each tile into 9 smaller tiles, which are denoised in such a way that a tile is always surrounded by static contex during denoising. This strategy is more prone to seams but because the location of the tiles is static, this strategy is compatible with uni samplers and has no overhead between steps. However the padding makes it so that up to 4 times as many tiles have to be denoised.
+
+<details>
+<summary>
+visual explanation
+</summary>
+
+![gif showing of padded tiling](https://github.com/BlenderNeko/ComfyUI_TiledKSampler/blob/master/examples/tiled_padding.gif)
+</details>
+
+### simple
+
+The simple tiling strategy divides the image into a static grid of tiles and denoises these one by one.
+
+### roadmap:
 
  - [x] latent masks
  - [x] image wide control nets
  - [x] T2I adaptors (requires forked version of comfy for now)
  - [ ] tile wide control nets and T2I adaptors (e.g. style models)
- - [ ] area conditioning
- - [ ] area mask conditioning
- - [ ] GLIGEN
+ - [x] area conditioning
+ - [x] area mask conditioning
+ - [x] GLIGEN
+
+note:
+
+max supported batch size is currently 1, node is currently not fully compatible with tome. These things should change after a PR to comfy
