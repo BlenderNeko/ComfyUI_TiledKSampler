@@ -200,7 +200,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                         if tiled_mask is None:
                             tiled_noise = torch.zeros_like(tiled_latent)
                         else:
-                            tiling.get_slice(noise, tile_h, tile_h_len, tile_w, tile_w_len).to(device) * (1 - tiled_mask)
+                            tiled_noise = tiling.get_slice(noise, tile_h, tile_h_len, tile_w, tile_w_len).to(device) * (1 - tiled_mask)
                     
                     #TODO: all other condition based stuff like area sets and GLIGEN should also happen here
 
