@@ -60,7 +60,3 @@ The simple tiling strategy divides the image into a static grid of tiles and den
  - [x] area conditioning
  - [x] area mask conditioning
  - [x] GLIGEN
-
-note:
-
-max supported batch size is currently 1, node is currently not fully compatible with tome. These things should change after a PR to comfy
