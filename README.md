@@ -55,7 +55,7 @@ The simple tiling strategy divides the image into a static grid of tiles and den
 
  - [x] latent masks
  - [x] image wide control nets
- - [x] T2I adaptors (requires forked version of comfy for now)
+ - [x] T2I adaptors
  - [ ] tile wide control nets and T2I adaptors (e.g. style models)
  - [x] area conditioning
  - [x] area mask conditioning
