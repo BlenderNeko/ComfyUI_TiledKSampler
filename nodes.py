@@ -15,6 +15,16 @@ from . import tiling
 
 MAX_RESOLUTION=8192
 
+def recursion_to_list(obj, attr):
+    current = obj
+    yield current
+    while True:
+        current = getattr(current, attr, None)
+        if current is not None:
+            yield current
+        else:
+            return
+
 def copy_cond(cond):
     return [(c1,c2.copy()) for c1,c2 in cond]
 
@@ -115,6 +125,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
 
     #cnets
     cnets = [m for m in models if isinstance(m, comfy.sd.ControlNet)]
+    cnets = list(set([x for m in cnets for x in recursion_to_list(m, "previous_controlnet")]))
     cnet_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
         if m.cond_hint_original.shape[-2] != shape[-2] * 8 or m.cond_hint_original.shape[-1] != shape[-1] * 8 else None
@@ -122,6 +133,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
 
     #T2I
     T2Is = [m for m in models if isinstance(m, comfy.sd.T2IAdapter)]
+    T2Is = [x for m in T2Is for x in recursion_to_list(m, "previous_controlnet")]
     T2I_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
         if m.cond_hint_original.shape[-2] != shape[-2] * 8 or m.cond_hint_original.shape[-1] != shape[-1] * 8 or (m.channels_in == 1 and m.cond_hint_original.shape[1] != 1) else None
