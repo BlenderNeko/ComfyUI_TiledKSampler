@@ -55,12 +55,8 @@ The simple tiling strategy divides the image into a static grid of tiles and den
 
  - [x] latent masks
  - [x] image wide control nets
- - [x] T2I adaptors (requires forked version of comfy for now)
+ - [x] T2I adaptors
  - [ ] tile wide control nets and T2I adaptors (e.g. style models)
  - [x] area conditioning
  - [x] area mask conditioning
  - [x] GLIGEN
-
-note:
-
-max supported batch size is currently 1, node is currently not fully compatible with tome. These things should change after a PR to comfy
