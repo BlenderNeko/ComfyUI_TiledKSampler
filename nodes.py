@@ -98,8 +98,9 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     if add_noise == "disable":
         noise = torch.zeros(samples.size(), dtype=samples.dtype, layout=samples.layout, device="cpu")
     else:
-        skip = latent_image["batch_index"] if "batch_index" in latent_image else 0
+        skip = latent_image["batch_index"] if "batch_index" in latent_image else None
         noise = comfy.sample.prepare_noise(samples, noise_seed, skip)
+    noise = model.model.process_latent_out(noise)
 
     if noise_mask is not None:
         noise_mask = comfy.sample.prepare_mask(noise_mask, noise.shape, device)
@@ -239,7 +240,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                     for (_, cond), gligen in zip(neg, gligen_neg):
                         slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen)
 
-                    tile_result = sampler.sample(tiled_noise, pos, neg, cfg=cfg, latent_image=tiled_latent, start_step=start_at_step + i * tile_steps, last_step=start_at_step + i*tile_steps + tile_steps, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=tiled_mask, callback=callback, disable_pbar=True)
+                    tile_result = sampler.sample(tiled_noise, pos, neg, cfg=cfg, latent_image=tiled_latent, start_step=start_at_step + i * tile_steps, last_step=start_at_step + i*tile_steps + tile_steps, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=tiled_mask, callback=callback, disable_pbar=True, seed=noise_seed)
                     tiling.set_slice(samples, tile_result, tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask)
                     
 
