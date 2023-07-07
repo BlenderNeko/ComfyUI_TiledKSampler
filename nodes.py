@@ -12,6 +12,7 @@ import comfy.sd
 import comfy.model_management
 import comfy.sample
 from . import tiling
+import latent_preview
 
 MAX_RESOLUTION=8192
 
@@ -89,7 +90,7 @@ def slices_T2I(h, h_len, w, w_len, model:comfy.sd.T2IAdapter, img):
         img = model.cond_hint_original
     model.cond_hint = tiling.get_slice(img, h*8, h_len*8, w*8, w_len*8).float().to(model.device)
 
-def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, denoise=1.0):
+def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, denoise=1.0, preview=False):
     end_at_step = min(end_at_step, steps)
     device = comfy.model_management.get_torch_device()
     samples = latent_image["samples"]
@@ -100,7 +101,6 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     else:
         skip = latent_image["batch_index"] if "batch_index" in latent_image else None
         noise = comfy.sample.prepare_noise(samples, noise_seed, skip)
-    noise = model.model.process_latent_out(noise)
 
     if noise_mask is not None:
         noise_mask = comfy.sample.prepare_mask(noise_mask, noise.shape, device)
@@ -119,9 +119,9 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
 
     if tiling_strategy != 'padded':
         if noise_mask is not None:
-            samples += sampler.sigmas[start_at_step] * noise_mask * noise.to(device)
+            samples += sampler.sigmas[start_at_step] * noise_mask * model.model.process_latent_out(noise).to(device)
         else:
-            samples += sampler.sigmas[start_at_step] * noise.to(device)
+            samples += sampler.sigmas[start_at_step] * model.model.process_latent_out(noise).to(device)
         
 
     #cnets
@@ -180,14 +180,26 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
 
     total_steps = sum([num_steps for img_pass in tiles for steps_list in img_pass for _,_,_,_,num_steps,_ in steps_list])
     current_step = [0]
+
+    preview_format = "JPEG"
+    if preview_format not in ["JPEG", "PNG"]:
+        preview_format = "JPEG"
+    previewer = None
+    if preview:
+        previewer = latent_preview.get_previewer(device, model.model.latent_format)
+    
     
     with tqdm(total=total_steps) as pbar_tqdm:
         pbar = comfy.utils.ProgressBar(total_steps)
         
         def callback(step, x0, x, total_steps):
             current_step[0] += 1
-            pbar.update_absolute(current_step[0])
+            preview_bytes = None
+            if previewer:
+                preview_bytes = previewer.decode_latent_to_preview_image(preview_format, x0)
+            pbar.update_absolute(current_step[0], preview=preview_bytes)
             pbar_tqdm.update(1)
+            
 
         for img_pass in tiles:
             for i in range(len(img_pass)):
@@ -276,7 +288,7 @@ class TiledKSampler:
 
     def sample(self, model, seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise):
         steps_total = int(steps / denoise)
-        return sample_common(model, 'enable', seed, tile_width, tile_height, tiling_strategy, steps_total, cfg, sampler_name, scheduler, positive, negative, latent_image, steps_total-steps, steps_total, 'disable', denoise=1.0)
+        return sample_common(model, 'enable', seed, tile_width, tile_height, tiling_strategy, steps_total, cfg, sampler_name, scheduler, positive, negative, latent_image, steps_total-steps, steps_total, 'disable', denoise=1.0, preview=True)
 
 class TiledKSamplerAdvanced:
     @classmethod
@@ -298,6 +310,7 @@ class TiledKSamplerAdvanced:
                     "start_at_step": ("INT", {"default": 0, "min": 0, "max": 10000}),
                     "end_at_step": ("INT", {"default": 10000, "min": 0, "max": 10000}),
                     "return_with_leftover_noise": (["disable", "enable"], ),
+                    "preview": (["disable", "enable"], ),
                     }}
 
     RETURN_TYPES = ("LATENT",)
@@ -305,8 +318,8 @@ class TiledKSamplerAdvanced:
 
     CATEGORY = "sampling"
 
-    def sample(self, model, add_noise, noise_seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, denoise=1.0):
-        return sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, denoise=1.0)
+    def sample(self, model, add_noise, noise_seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, preview, denoise=1.0):
+        return sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, denoise=1.0, preview= preview == 'enable')
     
 
     
