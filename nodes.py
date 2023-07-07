@@ -113,7 +113,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
 
     samples = samples.to(device)
 
-    models = comfy.sample.load_additional_models(positive, negative)
+    models = comfy.sample.load_additional_models(positive, negative, model.model_dtype())
 
     sampler = comfy.samplers.KSampler(real_model, steps=steps, device=device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
 
