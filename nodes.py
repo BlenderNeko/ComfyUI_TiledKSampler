@@ -27,7 +27,7 @@ def recursion_to_list(obj, attr):
             return
 
 def copy_cond(cond):
-    return [(c1,c2.copy()) for c1,c2 in cond]
+    return [[c1,c2.copy()] for c1,c2 in cond]
 
 def slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, cond, area):
     tile_h_end = tile_h + tile_h_len
