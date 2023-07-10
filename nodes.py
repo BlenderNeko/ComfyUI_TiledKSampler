@@ -90,6 +90,8 @@ def slices_T2I(h, h_len, w, w_len, model:comfy.sd.T2IAdapter, img):
         img = model.cond_hint_original
     model.cond_hint = tiling.get_slice(img, h*8, h_len*8, w*8, w_len*8).float().to(model.device)
 
+# TODO: refactor some of the mess
+
 def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, denoise=1.0, preview=False):
     end_at_step = min(end_at_step, steps)
     device = comfy.model_management.get_torch_device()
@@ -122,7 +124,6 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
             samples += sampler.sigmas[start_at_step] * noise_mask * model.model.process_latent_out(noise).to(device)
         else:
             samples += sampler.sigmas[start_at_step] * model.model.process_latent_out(noise).to(device)
-        
 
     #cnets
     cnets = [m for m in models if isinstance(m, comfy.sd.ControlNet)]
@@ -200,29 +201,34 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
             pbar.update_absolute(current_step[0], preview=preview_bytes)
             pbar_tqdm.update(1)
             
-
+        if tiling_strategy == "random":
+            samples_next = samples.clone()
         for img_pass in tiles:
             for i in range(len(img_pass)):
+
                 for tile_h, tile_h_len, tile_w, tile_w_len, tile_steps, tile_mask in img_pass[i]:
-                
-                    #if we have masks get mask slices and see if we can skip slices
-                    if noise_mask is not None or tile_mask is not None:
-                        if noise_mask is not None:
-                            tiled_mask = tiling.get_slice(noise_mask, tile_h, tile_h_len, tile_w, tile_w_len)
-                            if tile_mask is not None:
-                                tiled_mask *= tile_mask.to(device)
+                    tiled_mask = None
+                    if noise_mask is not None:
+                        tiled_mask = tiling.get_slice(noise_mask, tile_h, tile_h_len, tile_w, tile_w_len)
+                    if tile_mask is not None:
+                        if tiled_mask is not None:
+                            tiled_mask *= tile_mask.to(device)
                         else:
                             tiled_mask = tile_mask.to(device)
-                        if tiled_mask.sum().cpu() == 0.0:
+                    
+                    if tiling_strategy != 'simple':
+                        tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask = tiling.mask_at_boundary(   tile_h, tile_h_len, tile_w, tile_w_len, 
+                                                                                                        tile_height, tile_width, samples.shape[-2], samples.shape[-1],
+                                                                                                        tiled_mask, device)
+                    if tiled_mask is not None and tiled_mask.sum().cpu() == 0.0:
                             continue
-                    else:
-                        tiled_mask = None
                             
                     tiled_latent = tiling.get_slice(samples, tile_h, tile_h_len, tile_w, tile_w_len)
+                    
                     if tiling_strategy == 'padded':
                         tiled_noise = tiling.get_slice(noise, tile_h, tile_h_len, tile_w, tile_w_len).to(device)
                     else:
-                        if tiled_mask is None:
+                        if tiled_mask is None or noise_mask is None:
                             tiled_noise = torch.zeros_like(tiled_latent)
                         else:
                             tiled_noise = tiling.get_slice(noise, tile_h, tile_h_len, tile_w, tile_w_len).to(device) * (1 - tiled_mask)
@@ -253,7 +259,12 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                         slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen)
 
                     tile_result = sampler.sample(tiled_noise, pos, neg, cfg=cfg, latent_image=tiled_latent, start_step=start_at_step + i * tile_steps, last_step=start_at_step + i*tile_steps + tile_steps, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=tiled_mask, callback=callback, disable_pbar=True, seed=noise_seed)
-                    tiling.set_slice(samples, tile_result, tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask)
+                    if tiling_strategy == "random":
+                        tiling.set_slice(samples_next, tile_result, tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask)
+                    else:
+                        tiling.set_slice(samples, tile_result, tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask)
+                if tiling_strategy == "random":
+                    samples = samples_next.clone()
                     
 
     comfy.sample.cleanup_additional_models(models)

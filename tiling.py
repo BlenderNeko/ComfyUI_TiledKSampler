@@ -114,7 +114,18 @@ def get_tiles_and_masks_padded(steps, latent_shape, tile_height, tile_width):
     ]
     
     return passes
+
+def mask_at_boundary(h, h_len, w, w_len, tile_size_h, tile_size_w, latent_size_h, latent_size_w, mask, device='cpu'):
+    tile_size_h = int(tile_size_h // 8)
+    tile_size_w = int(tile_size_w // 8)
     
+    if (h_len == tile_size_h or h_len == latent_size_h) and (w_len == tile_size_w or w_len == latent_size_w):
+        return h, h_len, w, w_len, mask
+    h_offset = min(0, latent_size_h - (h + tile_size_h))
+    w_offset = min(0, latent_size_w - (w + tile_size_w))
+    new_mask = torch.zeros((1,1,tile_size_h, tile_size_w), dtype=torch.float32, device=device)
+    new_mask[:,:,-h_offset:, -w_offset:] = mask if mask is not None else 1.0
+    return h + h_offset, tile_size_h, w + w_offset, tile_size_w, new_mask
 
 def get_tiles_and_masks_rgrid(steps, latent_shape, tile_height, tile_width, generator):
 
