@@ -35,6 +35,10 @@ This tiling strategy is exceptionally good in hiding seams, even when starting o
 ![gif showing of the random brick tiling](https://github.com/BlenderNeko/ComfyUI_TiledKSampler/blob/master/examples/ComfyUI_02006_.png)
 </details>
 
+### random strict:
+
+One downside of random is that it can unfavorably crop border tiles, random strict uses masking to ensure no border tiles have to be cropped. This tiling strategy does not play nice with the SDE sampler.
+
 ### padded:
 
 The padded tiling strategy tries to reduce seams by giving each tile more context of its surroundings through padding. It does this by further dividing each tile into 9 smaller tiles, which are denoised in such a way that a tile is always surrounded by static contex during denoising. This strategy is more prone to seams but because the location of the tiles is static, this strategy is compatible with uni samplers and has no overhead between steps. However the padding makes it so that up to 4 times as many tiles have to be denoised.
