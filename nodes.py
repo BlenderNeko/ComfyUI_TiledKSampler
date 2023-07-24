@@ -107,7 +107,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
         noise = comfy.sample.prepare_noise(samples, noise_seed, skip)
 
     if noise_mask is not None:
-        noise_mask = comfy.sample.prepare_mask(noise_mask, noise.shape, device)
+        noise_mask = comfy.sample.prepare_mask(noise_mask, noise.shape, device='cpu')
 
     shape = samples.shape
     
@@ -115,17 +115,15 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     comfy.model_management.load_model_gpu(model)
     real_model = model.model
 
-    samples = samples.to(device)
-
     models = comfy.sample.load_additional_models(positive, negative, model.model_dtype())
 
     sampler = comfy.samplers.KSampler(real_model, steps=steps, device=device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
 
     if tiling_strategy != 'padded':
         if noise_mask is not None:
-            samples += sampler.sigmas[start_at_step] * noise_mask * model.model.process_latent_out(noise).to(device)
+            samples += sampler.sigmas[start_at_step].cpu() * noise_mask * model.model.process_latent_out(noise)
         else:
-            samples += sampler.sigmas[start_at_step] * model.model.process_latent_out(noise).to(device)
+            samples += sampler.sigmas[start_at_step].cpu() * model.model.process_latent_out(noise)
 
     #cnets
     cnets = [m for m in models if isinstance(m, comfy.sd.ControlNet)]
@@ -210,7 +208,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                 for tile_h, tile_h_len, tile_w, tile_w_len, tile_steps, tile_mask in img_pass[i]:
                     tiled_mask = None
                     if noise_mask is not None:
-                        tiled_mask = tiling.get_slice(noise_mask, tile_h, tile_h_len, tile_w, tile_w_len)
+                        tiled_mask = tiling.get_slice(noise_mask, tile_h, tile_h_len, tile_w, tile_w_len).to(device)
                     if tile_mask is not None:
                         if tiled_mask is not None:
                             tiled_mask *= tile_mask.to(device)
@@ -224,7 +222,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                     if tiled_mask is not None and tiled_mask.sum().cpu() == 0.0:
                             continue
                             
-                    tiled_latent = tiling.get_slice(samples, tile_h, tile_h_len, tile_w, tile_w_len)
+                    tiled_latent = tiling.get_slice(samples, tile_h, tile_h_len, tile_w, tile_w_len).to(device)
                     
                     if tiling_strategy == 'padded':
                         tiled_noise = tiling.get_slice(noise, tile_h, tile_h_len, tile_w, tile_w_len).to(device)
@@ -260,6 +258,9 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                         slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen)
 
                     tile_result = sampler.sample(tiled_noise, pos, neg, cfg=cfg, latent_image=tiled_latent, start_step=start_at_step + i * tile_steps, last_step=start_at_step + i*tile_steps + tile_steps, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=tiled_mask, callback=callback, disable_pbar=True, seed=noise_seed)
+                    tile_result = tile_result.cpu()
+                    if tiled_mask is not None:
+                        tiled_mask = tiled_mask.cpu()
                     if tiling_strategy == "random strict":
                         tiling.set_slice(samples_next, tile_result, tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask)
                     else:
