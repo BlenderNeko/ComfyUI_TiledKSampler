@@ -92,6 +92,8 @@ def slices_T2I(h, h_len, w, w_len, model:comfy.sd.T2IAdapter, img):
 
 # TODO: refactor some of the mess
 
+from PIL import Image
+
 def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_strategy, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, start_at_step, end_at_step, return_with_leftover_noise, denoise=1.0, preview=False):
     end_at_step = min(end_at_step, steps)
     device = comfy.model_management.get_torch_device()
@@ -172,7 +174,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     negative_copy = comfy.sample.broadcast_cond(negative, shape[0], device)
 
     gen = torch.manual_seed(noise_seed)
-    if tiling_strategy == 'random':
+    if tiling_strategy == 'random' or tiling_strategy == 'random strict':
         tiles = tiling.get_tiles_and_masks_rgrid(end_at_step - start_at_step, samples.shape, tile_height, tile_width, gen)
     elif tiling_strategy == 'padded':
         tiles = tiling.get_tiles_and_masks_padded(end_at_step - start_at_step, samples.shape, tile_height, tile_width)
@@ -201,11 +203,10 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
             pbar.update_absolute(current_step[0], preview=preview_bytes)
             pbar_tqdm.update(1)
             
-        if tiling_strategy == "random":
+        if tiling_strategy == "random strict":
             samples_next = samples.clone()
         for img_pass in tiles:
             for i in range(len(img_pass)):
-
                 for tile_h, tile_h_len, tile_w, tile_w_len, tile_steps, tile_mask in img_pass[i]:
                     tiled_mask = None
                     if noise_mask is not None:
@@ -216,7 +217,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                         else:
                             tiled_mask = tile_mask.to(device)
                     
-                    if tiling_strategy != 'simple':
+                    if tiling_strategy == 'padded' or tiling_strategy == 'random strict':
                         tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask = tiling.mask_at_boundary(   tile_h, tile_h_len, tile_w, tile_w_len, 
                                                                                                         tile_height, tile_width, samples.shape[-2], samples.shape[-1],
                                                                                                         tiled_mask, device)
@@ -259,11 +260,11 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                         slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen)
 
                     tile_result = sampler.sample(tiled_noise, pos, neg, cfg=cfg, latent_image=tiled_latent, start_step=start_at_step + i * tile_steps, last_step=start_at_step + i*tile_steps + tile_steps, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=tiled_mask, callback=callback, disable_pbar=True, seed=noise_seed)
-                    if tiling_strategy == "random":
+                    if tiling_strategy == "random strict":
                         tiling.set_slice(samples_next, tile_result, tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask)
                     else:
                         tiling.set_slice(samples, tile_result, tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask)
-                if tiling_strategy == "random":
+                if tiling_strategy == "random strict":
                     samples = samples_next.clone()
                     
 
@@ -281,7 +282,7 @@ class TiledKSampler:
                     "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                     "tile_width": ("INT", {"default": 512, "min": 256, "max": MAX_RESOLUTION, "step": 64}),
                     "tile_height": ("INT", {"default": 512, "min": 256, "max": MAX_RESOLUTION, "step": 64}),
-                    "tiling_strategy": (["random", "padded", 'simple'], ),
+                    "tiling_strategy": (["random", "random strict", "padded", 'simple'], ),
                     "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                     "sampler_name": (comfy.samplers.KSampler.SAMPLERS, ),
@@ -310,7 +311,7 @@ class TiledKSamplerAdvanced:
                     "noise_seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                     "tile_width": ("INT", {"default": 512, "min": 256, "max": MAX_RESOLUTION, "step": 64}),
                     "tile_height": ("INT", {"default": 512, "min": 256, "max": MAX_RESOLUTION, "step": 64}),
-                    "tiling_strategy": (["random", "padded", 'simple'], ),
+                    "tiling_strategy": (["random", "random strict", "padded", 'simple'], ),
                     "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                     "sampler_name": (comfy.samplers.KSampler.SAMPLERS, ),
