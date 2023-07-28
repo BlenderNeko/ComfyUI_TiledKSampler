@@ -110,6 +110,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
         noise_mask = comfy.sample.prepare_mask(noise_mask, noise.shape, device='cpu')
 
     shape = samples.shape
+    samples = samples.clone()
     
     real_model = None
     comfy.model_management.load_model_gpu(model)
