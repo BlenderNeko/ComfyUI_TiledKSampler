@@ -124,7 +124,7 @@ def mask_at_boundary(h, h_len, w, w_len, tile_size_h, tile_size_w, latent_size_h
     h_offset = min(0, latent_size_h - (h + tile_size_h))
     w_offset = min(0, latent_size_w - (w + tile_size_w))
     new_mask = torch.zeros((1,1,tile_size_h, tile_size_w), dtype=torch.float32, device=device)
-    new_mask[:,:,-h_offset:h_len if h_offset == 0 else tile_size_h, -w_offset:w_len if w_offset == 0 else tile_size_w] =  1.0
+    new_mask[:,:,-h_offset:h_len if h_offset == 0 else tile_size_h, -w_offset:w_len if w_offset == 0 else tile_size_w] =  1.0 if mask is None else mask
     return h + h_offset, tile_size_h, w + w_offset, tile_size_w, new_mask
 
 def get_tiles_and_masks_rgrid(steps, latent_shape, tile_height, tile_width, generator):
