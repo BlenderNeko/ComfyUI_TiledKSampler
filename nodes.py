@@ -276,7 +276,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                     samples = samples_next.clone()
                     
 
-    comfy.sample.cleanup_additional_models(models)
+    comfy.sample.cleanup_additional_models(modelPatches)
 
     out = latent_image.copy()
     out["samples"] = samples.cpu()
