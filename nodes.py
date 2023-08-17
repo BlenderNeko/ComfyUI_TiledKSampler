@@ -113,10 +113,12 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     samples = samples.clone()
     
     real_model = None
-    comfy.model_management.load_model_gpu(model)
+    modelPatches = comfy.sample.get_additional_models(positive, negative)
+    comfy.model_management.load_models_gpu([model] + modelPatches, comfy.model_management.batch_area_memory(noise.shape[2] * noise.shape[3]))
+    #comfy.model_management.load_model_gpu(model)
     real_model = model.model
 
-    models = comfy.sample.load_additional_models(positive, negative, model.model_dtype())
+    #models = comfy.sample.load_additional_models(positive, negative, model.model_dtype())
 
     sampler = comfy.samplers.KSampler(real_model, steps=steps, device=device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
 
@@ -127,7 +129,8 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
             samples += sampler.sigmas[start_at_step].cpu() * model.model.process_latent_out(noise)
 
     #cnets
-    cnets = [m for m in models if isinstance(m, comfy.sd.ControlNet)]
+    cnets =  comfy.sample.get_models_from_cond(positive, 'control') + comfy.sample.get_models_from_cond(negative, 'control')
+    cnets = [m for m in cnets if isinstance(m, comfy.sd.ControlNet)]
     cnets = list(set([x for m in cnets for x in recursion_to_list(m, "previous_controlnet")]))
     cnet_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
@@ -135,7 +138,8 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
         for m in cnets]
 
     #T2I
-    T2Is = [m for m in models if isinstance(m, comfy.sd.T2IAdapter)]
+    T2Is =  comfy.sample.get_models_from_cond(positive, 'control') + comfy.sample.get_models_from_cond(negative, 'control')
+    T2Is = [m for m in T2Is if isinstance(m, comfy.sd.T2IAdapter)]
     T2Is = [x for m in T2Is for x in recursion_to_list(m, "previous_controlnet")]
     T2I_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
@@ -220,6 +224,8 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                         tile_h, tile_h_len, tile_w, tile_w_len, tiled_mask = tiling.mask_at_boundary(   tile_h, tile_h_len, tile_w, tile_w_len, 
                                                                                                         tile_height, tile_width, samples.shape[-2], samples.shape[-1],
                                                                                                         tiled_mask, device)
+                        
+
                     if tiled_mask is not None and tiled_mask.sum().cpu() == 0.0:
                             continue
                             
