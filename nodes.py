@@ -9,6 +9,7 @@ import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy"))
 import comfy.sd
+import comfy.controlnet
 import comfy.model_management
 import comfy.sample
 from . import tiling
@@ -79,12 +80,12 @@ def slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen):
     else:
         cond['gligen'] = (gligen_type, gligen_model, gligen_areas_new)
 
-def slice_cnet(h, h_len, w, w_len, model:comfy.sd.ControlNet, img):
+def slice_cnet(h, h_len, w, w_len, model:comfy.controlnet.ControlBase, img):
     if img is None:
         img = model.cond_hint_original
     model.cond_hint = tiling.get_slice(img, h*8, h_len*8, w*8, w_len*8).to(model.control_model.dtype).to(model.device)
 
-def slices_T2I(h, h_len, w, w_len, model:comfy.sd.T2IAdapter, img):
+def slices_T2I(h, h_len, w, w_len, model:comfy.controlnet.ControlBase, img):
     model.control_input = None
     if img is None:
         img = model.cond_hint_original
@@ -133,7 +134,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
 
     #cnets
     cnets =  comfy.sample.get_models_from_cond(positive, 'control') + comfy.sample.get_models_from_cond(negative, 'control')
-    cnets = [m for m in cnets if isinstance(m, comfy.sd.ControlNet)]
+    cnets = [m for m in cnets if isinstance(m, comfy.controlnet.ControlNet)]
     cnets = list(set([x for m in cnets for x in recursion_to_list(m, "previous_controlnet")]))
     cnet_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
@@ -142,7 +143,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
 
     #T2I
     T2Is =  comfy.sample.get_models_from_cond(positive, 'control') + comfy.sample.get_models_from_cond(negative, 'control')
-    T2Is = [m for m in T2Is if isinstance(m, comfy.sd.T2IAdapter)]
+    T2Is = [m for m in T2Is if isinstance(m, comfy.controlnet.T2IAdapter)]
     T2Is = [x for m in T2Is for x in recursion_to_list(m, "previous_controlnet")]
     T2I_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
