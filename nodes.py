@@ -112,6 +112,9 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     shape = samples.shape
     samples = samples.clone()
     
+    tile_width = min(shape[-1] * 8, tile_width)
+    tile_height = min(shape[2] * 8, tile_height)
+
     real_model = None
     modelPatches = comfy.sample.get_additional_models(positive, negative)
     comfy.model_management.load_models_gpu([model] + modelPatches, comfy.model_management.batch_area_memory(noise.shape[2] * noise.shape[3]))
