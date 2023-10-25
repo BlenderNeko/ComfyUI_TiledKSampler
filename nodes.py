@@ -117,7 +117,9 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     tile_height = min(shape[2] * 8, tile_height)
 
     real_model = None
-    modelPatches, inference_memory = comfy.sample.get_additional_models(positive, negative, model.model_dtype())
+    positive_copy = comfy.sample.convert_cond(positive)
+    negative_copy = comfy.sample.convert_cond(negative)
+    modelPatches, inference_memory = comfy.sample.get_additional_models(positive_copy, negative_copy, model.model_dtype())
     comfy.model_management.load_models_gpu([model] + modelPatches, comfy.model_management.batch_area_memory(noise.shape[0] * noise.shape[2] * noise.shape[3]) + inference_memory)
     #comfy.model_management.load_model_gpu(model)
     real_model = model.model
@@ -133,8 +135,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
             samples += sampler.sigmas[start_at_step].cpu() * model.model.process_latent_out(noise)
 
     #cnets
-    cnets =  comfy.sample.get_models_from_cond(positive, 'control') + comfy.sample.get_models_from_cond(negative, 'control')
-    cnets = [m for m in cnets if isinstance(m, comfy.controlnet.ControlNet)]
+    cnets =  [c['control'] for (_, c) in positive + negative if 'control' in c and isinstance(c['control'], comfy.controlnet.ControlNet)]
     cnets = list(set([x for m in cnets for x in recursion_to_list(m, "previous_controlnet")]))
     cnet_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
@@ -142,8 +143,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
         for m in cnets]
 
     #T2I
-    T2Is =  comfy.sample.get_models_from_cond(positive, 'control') + comfy.sample.get_models_from_cond(negative, 'control')
-    T2Is = [m for m in T2Is if isinstance(m, comfy.controlnet.T2IAdapter)]
+    T2Is =  [c['control'] for (_, c) in positive + negative if 'control' in c and isinstance(c['control'], comfy.controlnet.T2IAdapter)]
     T2Is = [x for m in T2Is for x in recursion_to_list(m, "previous_controlnet")]
     T2I_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
@@ -176,9 +176,6 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
         c[1]['gligen'] if 'gligen' in c[1] else None
         for c in negative
     ]
-
-    positive_copy = comfy.sample.broadcast_cond(positive, shape[0], device)
-    negative_copy = comfy.sample.broadcast_cond(negative, shape[0], device)
 
     gen = torch.manual_seed(noise_seed)
     if tiling_strategy == 'random' or tiling_strategy == 'random strict':
@@ -253,8 +250,8 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                     for m, img in zip(T2Is, T2I_imgs):
                         slices_T2I(tile_h, tile_h_len, tile_w, tile_w_len, m, img)
 
-                    pos = copy_cond(positive_copy)
-                    neg = copy_cond(negative_copy)
+                    pos = [c.copy() for c in positive_copy]#copy_cond(positive_copy)
+                    neg = [c.copy() for c in negative_copy]#copy_cond(negative_copy)
 
                     #cond areas
                     pos = [slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, c, area) for c, area in zip(pos, spatial_conds_pos)]
@@ -263,9 +260,9 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                     neg = [c for c, ignore in neg if not ignore]
 
                     #gligen
-                    for (_, cond), gligen in zip(pos, gligen_pos):
+                    for cond, gligen in zip(pos, gligen_pos):
                         slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen)
-                    for (_, cond), gligen in zip(neg, gligen_neg):
+                    for cond, gligen in zip(neg, gligen_neg):
                         slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen)
 
                     tile_result = sampler.sample(tiled_noise, pos, neg, cfg=cfg, latent_image=tiled_latent, start_step=start_at_step + i * tile_steps, last_step=start_at_step + i*tile_steps + tile_steps, force_full_denoise=force_full_denoise and i+1 == end_at_step - start_at_step, denoise_mask=tiled_mask, callback=callback, disable_pbar=True, seed=noise_seed)
