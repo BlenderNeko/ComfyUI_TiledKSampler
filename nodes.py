@@ -120,7 +120,8 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     positive_copy = comfy.sample.convert_cond(positive)
     negative_copy = comfy.sample.convert_cond(negative)
     modelPatches, inference_memory = comfy.sample.get_additional_models(positive_copy, negative_copy, model.model_dtype())
-    comfy.model_management.load_models_gpu([model] + modelPatches, comfy.model_management.batch_area_memory(noise.shape[0] * noise.shape[2] * noise.shape[3]) + inference_memory)
+
+    comfy.model_management.load_models_gpu([model] + modelPatches, model.memory_required(noise.shape) + inference_memory)
     #comfy.model_management.load_model_gpu(model)
     real_model = model.model
 
@@ -137,6 +138,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     #cnets
     cnets =  [c['control'] for (_, c) in positive + negative if 'control' in c and isinstance(c['control'], comfy.controlnet.ControlNet)]
     cnets = list(set([x for m in cnets for x in recursion_to_list(m, "previous_controlnet")]))
+    cnets = [x for x in cnets if isinstance(x, comfy.controlnet.ControlNet)]
     cnet_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
         if m.cond_hint_original.shape[-2] != shape[-2] * 8 or m.cond_hint_original.shape[-1] != shape[-1] * 8 else None
@@ -145,6 +147,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     #T2I
     T2Is =  [c['control'] for (_, c) in positive + negative if 'control' in c and isinstance(c['control'], comfy.controlnet.T2IAdapter)]
     T2Is = [x for m in T2Is for x in recursion_to_list(m, "previous_controlnet")]
+    T2Is = [x for x in T2Is if isinstance(x, comfy.controlnet.T2IAdapter)]
     T2I_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
         if m.cond_hint_original.shape[-2] != shape[-2] * 8 or m.cond_hint_original.shape[-1] != shape[-1] * 8 or (m.channels_in == 1 and m.cond_hint_original.shape[1] != 1) else None
