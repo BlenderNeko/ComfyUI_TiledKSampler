@@ -122,10 +122,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     modelPatches, inference_memory = comfy.sample.get_additional_models(positive_copy, negative_copy, model.model_dtype())
 
     comfy.model_management.load_models_gpu([model] + modelPatches, model.memory_required(noise.shape) + inference_memory)
-    #comfy.model_management.load_model_gpu(model)
     real_model = model.model
-
-    #models = comfy.sample.load_additional_models(positive, negative, model.model_dtype())
 
     sampler = comfy.samplers.KSampler(real_model, steps=steps, device=device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
 
@@ -135,18 +132,22 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
         else:
             samples += sampler.sigmas[start_at_step].cpu() * model.model.process_latent_out(noise)
 
-    #cnets
-    cnets =  [c['control'] for (_, c) in positive + negative if 'control' in c and isinstance(c['control'], comfy.controlnet.ControlNet)]
+    # cnets
+    cnets =  [c['control'] for (_, c) in positive + negative if 'control' in c]
+    # unroll recursion
     cnets = list(set([x for m in cnets for x in recursion_to_list(m, "previous_controlnet")]))
+    # filter down to only cnets
     cnets = [x for x in cnets if isinstance(x, comfy.controlnet.ControlNet)]
     cnet_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
         if m.cond_hint_original.shape[-2] != shape[-2] * 8 or m.cond_hint_original.shape[-1] != shape[-1] * 8 else None
         for m in cnets]
 
-    #T2I
-    T2Is =  [c['control'] for (_, c) in positive + negative if 'control' in c and isinstance(c['control'], comfy.controlnet.T2IAdapter)]
+    # T2I
+    T2Is =  [c['control'] for (_, c) in positive + negative if 'control' in c]
+    # unroll recursion
     T2Is = [x for m in T2Is for x in recursion_to_list(m, "previous_controlnet")]
+    # filter down to only T2I
     T2Is = [x for x in T2Is if isinstance(x, comfy.controlnet.T2IAdapter)]
     T2I_imgs = [
         torch.nn.functional.interpolate(m.cond_hint_original, (shape[-2] * 8, shape[-1] * 8), mode='nearest-exact').to('cpu')
