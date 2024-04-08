@@ -45,15 +45,15 @@ def slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, cond, area):
             new_w = max(0, w - tile_w)
             new_h_end = min(tile_h_end, h_end - tile_h)
             new_w_end = min(tile_w_end, w_end - tile_w)
-            cond[1]['area'] = (new_h_end - new_h, new_w_end - new_w, new_h, new_w)
+            cond['area'] = (new_h_end - new_h, new_w_end - new_w, new_h, new_w)
         else:
             return (cond, True)
     if mask is not None:
         new_mask = tiling.get_slice(mask, tile_h,tile_h_len,tile_w,tile_w_len)
-        if new_mask.sum().cpu() == 0.0 and 'mask' in cond[1]:
+        if new_mask.sum().cpu() == 0.0 and 'mask' in cond:
             return (cond, True)
         else:
-            cond[1]['mask'] = new_mask
+            cond['mask'] = new_mask
     return (cond, False)
 
 def slice_gligen(tile_h, tile_h_len, tile_w, tile_w_len, cond, gligen):
@@ -95,6 +95,14 @@ def slices_T2I(h, h_len, w, w_len, model:comfy.controlnet.ControlBase, img):
     if img is None:
         img = model.cond_hint_original
     model.cond_hint = tiling.get_slice(img, h*8, h_len*8, w*8, w_len*8).float().to(model.device)
+
+def scale_mask(mask_tensor, shape, device):
+    """ensures noise mask is of proper dimensions"""
+    mask_tensor = torch.nn.functional.interpolate(mask_tensor.reshape((-1, 1, mask_tensor.shape[-2], mask_tensor.shape[-1])), size=(shape[2], shape[3]), mode="bilinear")
+    mask_tensor = mask_tensor.squeeze(1) # Remove extra dimension added during reshape.
+    mask_tensor = comfy.utils.repeat_to_batch_size(mask_tensor, shape[0])
+    mask_tensor = mask_tensor.to(device)
+    return mask_tensor
 
 # TODO: refactor some of the mess
 
@@ -172,12 +180,12 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     #cond area and mask
     spatial_conds_pos = [
         (c[1]['area'] if 'area' in c[1] else None, 
-            comfy.sample.prepare_mask(c[1]['mask'], shape, device) if 'mask' in c[1] else None)
+            scale_mask(c[1]['mask'], shape, device) if 'mask' in c[1] else None)
         for c in positive
     ]
     spatial_conds_neg = [
         (c[1]['area'] if 'area' in c[1] else None, 
-            comfy.sample.prepare_mask(c[1]['mask'], shape, device) if 'mask' in c[1] else None)
+            scale_mask(c[1]['mask'], shape, device) if 'mask' in c[1] else None)
         for c in negative
     ]
 
