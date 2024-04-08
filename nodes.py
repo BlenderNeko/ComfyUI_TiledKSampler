@@ -12,6 +12,7 @@ import comfy.sd
 import comfy.controlnet
 import comfy.model_management
 import comfy.sample
+import comfy.sampler_helpers
 from . import tiling
 import latent_preview
 
@@ -120,15 +121,20 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
     tile_width = min(shape[-1] * 8, tile_width)
     tile_height = min(shape[2] * 8, tile_height)
 
-    real_model = None
-    positive_copy = comfy.sample.convert_cond(positive)
-    negative_copy = comfy.sample.convert_cond(negative)
-    modelPatches, inference_memory = comfy.sample.get_additional_models(positive_copy, negative_copy, model.model_dtype())
+    conds0 = \
+        {"positive": comfy.sampler_helpers.convert_cond(positive),
+         "negative": comfy.sampler_helpers.convert_cond(negative)}
+
+    conds = {}
+    for k in conds0:
+        conds[k] = list(map(lambda a: a.copy(), conds0[k]))
+
+    modelPatches, inference_memory = comfy.sampler_helpers.get_additional_models(conds, model.model_dtype())
 
     comfy.model_management.load_models_gpu([model] + modelPatches, model.memory_required(noise.shape) + inference_memory)
     real_model = model.model
 
-    sampler = comfy.samplers.KSampler(real_model, steps=steps, device=device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
+    sampler = comfy.samplers.KSampler(model, steps=steps, device=device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
 
     if tiling_strategy != 'padded':
         if noise_mask is not None:
@@ -258,8 +264,8 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                     for m, img in zip(T2Is, T2I_imgs):
                         slices_T2I(tile_h, tile_h_len, tile_w, tile_w_len, m, img)
 
-                    pos = [c.copy() for c in positive_copy]#copy_cond(positive_copy)
-                    neg = [c.copy() for c in negative_copy]#copy_cond(negative_copy)
+                    pos = [c.copy() for c in positive]#copy_cond(positive_copy)
+                    neg = [c.copy() for c in negative]#copy_cond(negative_copy)
 
                     #cond areas
                     pos = [slice_cond(tile_h, tile_h_len, tile_w, tile_w_len, c, area) for c, area in zip(pos, spatial_conds_pos)]
@@ -285,7 +291,7 @@ def sample_common(model, add_noise, noise_seed, tile_width, tile_height, tiling_
                     samples = samples_next.clone()
                     
 
-    comfy.sample.cleanup_additional_models(modelPatches)
+    comfy.sampler_helpers.cleanup_additional_models(modelPatches)
 
     out = latent_image.copy()
     out["samples"] = samples.cpu()
